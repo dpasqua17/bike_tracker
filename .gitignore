@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local app state
+sessions.db
+
+# Session notes and local handoff files
+HANDOVER-*.md
+
+# Accidental scaffold artifact
+{ble,db,analytics,ui}/
