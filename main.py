@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QApplication
 import qasync
 import pyqtgraph as pg
 
+import config
 from db.database import init_db
 from ui.dashboard import MainWindow
 import ui.styles as styles
@@ -25,6 +26,8 @@ logging.basicConfig(
 
 
 async def main():
+    config.load_user_profile()
+
     pg.setConfigOptions(
         antialias=True,
         background=styles.PG_BACKGROUND,

@@ -4,6 +4,9 @@ __pycache__/
 
 # Local app state
 sessions.db
+sessions.db-shm
+sessions.db-wal
+user_profile.json
 
 # Session notes and local handoff files
 HANDOVER-*.md

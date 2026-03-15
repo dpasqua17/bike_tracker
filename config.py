@@ -3,6 +3,14 @@ User configuration — edit before first run.
 All physiological values affect VO2 max estimates.
 """
 
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+
+log = logging.getLogger(__name__)
+
 USER = {
     "name": "Your Name",
     "weight_kg": 75.0,          # update to your actual weight
@@ -55,3 +63,39 @@ UI_HZ = 2
 
 # VO2 max estimation method: "power", "hr_astrand", "hybrid"
 VO2_METHOD = "hybrid"
+
+USER_PROFILE_PATH = Path(__file__).resolve().parent / "user_profile.json"
+_PROFILE_FIELDS = {
+    "name",
+    "weight_kg",
+    "age",
+    "max_hr",
+    "verified_vo2max",
+    "ftp_watts",
+    "resting_hr",
+}
+
+
+def load_user_profile(path: Path | None = None) -> dict:
+    """Load local-only user profile overrides and apply them to USER in place."""
+    profile_path = path or USER_PROFILE_PATH
+    if not profile_path.exists():
+        return {}
+
+    try:
+        data = json.loads(profile_path.read_text())
+    except Exception:
+        log.exception("Failed reading user profile from %s", profile_path)
+        return {}
+
+    overrides = {k: v for k, v in data.items() if k in _PROFILE_FIELDS}
+    USER.update(overrides)
+    return overrides
+
+
+def save_user_profile(overrides: dict, path: Path | None = None) -> None:
+    """Persist local-only user profile fields and apply them to USER in place."""
+    profile_path = path or USER_PROFILE_PATH
+    profile_data = {k: v for k, v in overrides.items() if k in _PROFILE_FIELDS}
+    profile_path.write_text(json.dumps(profile_data, indent=2, sort_keys=True) + "\n")
+    USER.update(profile_data)

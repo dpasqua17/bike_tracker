@@ -23,7 +23,8 @@ import pyqtgraph as pg
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QLabel, QPushButton, QTabWidget, QSplitter,
+    QLabel, QPushButton, QTabWidget, QSplitter, QFormLayout,
+    QSpinBox, QDoubleSpinBox,
     QStatusBar, QDialog, QListWidget, QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal
@@ -34,7 +35,6 @@ from ble.hr_client import HeartRateClient, HeartRateSample
 from db.database import SessionDB
 from analytics.metrics import (
     estimate_power, RollingMetrics, LiveVO2Estimator,
-    classify_vo2max
 )
 from ui.widgets import MetricCard, SectionHeader, HRule
 from ui.history import HistoryTab, SessionDetailTab
@@ -207,10 +207,8 @@ class LiveSessionTab(QWidget):
         self.card_hr       = MetricCard("Heart Rate", "BPM")
         self.card_speed    = MetricCard("Speed",      "km/h", size="small")
         self.card_resist   = MetricCard("Resistance", "%",    size="small")
-        self.card_kcal     = MetricCard("Energy",     "kcal", size="small")
         self.card_distance = MetricCard("Distance",   "km",   size="small")
         self.card_np       = MetricCard("NP",         "W",    size="small")
-        self.card_tss      = MetricCard("TSS",        "",     size="small")
         self.card_rr       = MetricCard("RR",         "ms",   size="small")
         self.card_hrv      = MetricCard("HRV RMSSD",  "ms",   size="small")
 
@@ -220,28 +218,10 @@ class LiveSessionTab(QWidget):
 
         grid.addWidget(self.card_speed,    1, 0)
         grid.addWidget(self.card_resist,   1, 1)
-        grid.addWidget(self.card_kcal,     1, 2)
+        grid.addWidget(self.card_distance, 1, 2)
         grid.addWidget(self.card_np,       2, 0)
-        grid.addWidget(self.card_tss,      2, 1)
-        grid.addWidget(self.card_distance, 2, 2)
-        grid.addWidget(self.card_rr,       3, 0)
-        grid.addWidget(self.card_hrv,      3, 1)
-
-        # VO2 estimate card
-        vo2_card = QWidget()
-        vo2_card.setObjectName("metric-card")
-        vo2_layout = QVBoxLayout(vo2_card)
-        vo2_layout.setContentsMargins(16, 12, 16, 12)
-        vo2_lbl = QLabel("VO2 MAX EST.")
-        vo2_lbl.setObjectName("metric-label")
-        vo2_layout.addWidget(vo2_lbl)
-        self.vo2_value = QLabel("---")
-        self.vo2_value.setObjectName("vo2-display")
-        vo2_layout.addWidget(self.vo2_value)
-        self.vo2_class = QLabel("")
-        self.vo2_class.setObjectName("vo2-class")
-        vo2_layout.addWidget(self.vo2_class)
-        grid.addWidget(vo2_card, 3, 2)
+        grid.addWidget(self.card_rr,       2, 1)
+        grid.addWidget(self.card_hrv,      2, 2)
 
         root.addLayout(grid)
         root.addWidget(HRule())
@@ -255,13 +235,6 @@ class LiveSessionTab(QWidget):
         self.zone_label.setStyleSheet("color: #E8E8E8; font-size: 14px; font-weight: bold;")
         zone_row.addWidget(self.zone_label)
         zone_row.addStretch()
-        zone_row.addStretch()
-        tss_lbl = QLabel("TSS:")
-        tss_lbl.setStyleSheet("color: #55606E; font-size: 10px; letter-spacing: 2px;")
-        zone_row.addWidget(tss_lbl)
-        self.tss_label = QLabel("0")
-        self.tss_label.setStyleSheet("color: #E8E8E8; font-size: 14px;")
-        zone_row.addWidget(self.tss_label)
 
         if_lbl = QLabel("  IF:")
         if_lbl.setStyleSheet("color: #55606E; font-size: 10px; letter-spacing: 2px;")
@@ -277,7 +250,7 @@ class LiveSessionTab(QWidget):
         plots_split = QSplitter(Qt.Orientation.Horizontal)
 
         self.cad_plot = pg.PlotWidget(background=styles.PG_BACKGROUND)
-        self.cad_plot.setMaximumHeight(160)
+        self.cad_plot.setMaximumHeight(240)
         self.cad_plot.setLabel('left', 'RPM', color=styles.PG_FOREGROUND)
         self.cad_plot.showGrid(x=False, y=True, alpha=0.15)
         self.cad_plot.setYRange(0, 120, padding=0)
@@ -287,7 +260,7 @@ class LiveSessionTab(QWidget):
         self.cad_plot.setTitle("CADENCE", color=styles.PG_FOREGROUND, size="9pt")
 
         self.power_plot = pg.PlotWidget(background=styles.PG_BACKGROUND)
-        self.power_plot.setMaximumHeight(160)
+        self.power_plot.setMaximumHeight(240)
         self.power_plot.setLabel('left', 'W', color=styles.PG_FOREGROUND)
         self.power_plot.showGrid(x=False, y=True, alpha=0.15)
         self.power_plot.setYRange(0, 400, padding=0)
@@ -297,7 +270,7 @@ class LiveSessionTab(QWidget):
         self.power_plot.setTitle("POWER", color=styles.PG_FOREGROUND, size="9pt")
 
         self.speed_plot = pg.PlotWidget(background=styles.PG_BACKGROUND)
-        self.speed_plot.setMaximumHeight(160)
+        self.speed_plot.setMaximumHeight(240)
         self.speed_plot.setLabel('left', 'km/h', color=styles.PG_FOREGROUND)
         self.speed_plot.showGrid(x=False, y=True, alpha=0.15)
         self.speed_plot.setYRange(0, 60, padding=0)
@@ -397,7 +370,6 @@ class LiveSessionTab(QWidget):
         self.card_hr.set_value(self._display.hr, "{:.0f}")
         self.card_speed.set_value(self._display.speed, "{:.1f}")
         self.card_resist.set_value(self._display.resistance, "{}")
-        self.card_kcal.set_value(self._display.total_kcal, "{:.0f}")
         self.card_distance.set_value(self._display.distance_km, "{:.2f}")
         self.card_rr.set_value(self._display.rr_ms, "{:.0f}")
         self.card_hrv.set_value(self._display.hrv_rmssd_ms, "{:.0f}")
@@ -415,18 +387,7 @@ class LiveSessionTab(QWidget):
         if self._rolling:
             np_w = self._rolling.np()
             self.card_np.set_value(np_w, "{:.0f}")
-            dur = (time.time() - self._session_start) if self._session_start else 0
-            tss = self._rolling.tss(dur)
-            self.card_tss.set_value(tss, "{:.0f}")
-            self.tss_label.setText(f"{tss:.0f}")
             self.if_label.setText(f"{self._rolling.intensity_factor():.2f}")
-
-        # VO2 max
-        if self._vo2_est and self._vo2_est.current_estimate:
-            v = self._vo2_est.current_estimate
-            self.vo2_value.setText(f"{v:.1f}")
-            cls = classify_vo2max(v, config.USER["age"])
-            self.vo2_class.setText(cls.upper())
 
         # Plots
         cad = list(self._cadence_buf)
@@ -444,6 +405,66 @@ class LiveSessionTab(QWidget):
             h, r = divmod(elapsed, 3600)
             m, s = divmod(r, 60)
             self.timer_label.setText(f"{h:02d}:{m:02d}:{s:02d}")
+
+
+class SettingsTab(QWidget):
+    def __init__(self, on_save, parent=None):
+        super().__init__(parent)
+        self._on_save = on_save
+        self._setup_ui()
+        self.load_from_config()
+
+    def _setup_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
+
+        root.addWidget(SectionHeader("User Profile"))
+
+        form_host = QWidget()
+        form = QFormLayout(form_host)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(12)
+
+        self.max_hr_input = QSpinBox()
+        self.max_hr_input.setRange(100, 240)
+        self.max_hr_input.setSuffix(" bpm")
+        form.addRow("Measured max HR", self.max_hr_input)
+
+        self.vo2_input = QDoubleSpinBox()
+        self.vo2_input.setRange(10.0, 90.0)
+        self.vo2_input.setDecimals(1)
+        self.vo2_input.setSingleStep(0.1)
+        self.vo2_input.setSuffix(" ml/kg/min")
+        form.addRow("Verified VO2 max", self.vo2_input)
+
+        root.addWidget(form_host)
+
+        note = QLabel(
+            "Saved locally to user_profile.json. This file is git-ignored and not intended for the public repo."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #55606E;")
+        root.addWidget(note)
+
+        self.save_btn = QPushButton("SAVE PROFILE")
+        self.save_btn.clicked.connect(self._save)
+        root.addWidget(self.save_btn)
+        root.addStretch()
+
+    def load_from_config(self):
+        max_hr = config.USER.get("max_hr") or (220 - config.USER["age"])
+        vo2 = config.USER.get("verified_vo2max") or 0.0
+        self.max_hr_input.setValue(int(max_hr))
+        self.vo2_input.setValue(float(vo2))
+
+    def _save(self):
+        profile = {
+            "max_hr": int(self.max_hr_input.value()),
+            "verified_vo2max": round(float(self.vo2_input.value()), 1),
+        }
+        config.save_user_profile(profile)
+        self._on_save(profile)
 
 
 class MainWindow(QMainWindow):
@@ -531,10 +552,12 @@ class MainWindow(QMainWindow):
         self.live_tab = LiveSessionTab()
         self.history_tab = HistoryTab(self._session_db)
         self.detail_tab = SessionDetailTab(self._session_db)
+        self.settings_tab = SettingsTab(self._on_profile_saved)
 
         self.tabs.addTab(self.live_tab, "LIVE SESSION")
         self.tabs.addTab(self.history_tab, "HISTORY")
         self.tabs.addTab(self.detail_tab, "SESSION DETAIL")
+        self.tabs.addTab(self.settings_tab, "SETTINGS")
 
         self.history_tab.session_selected.connect(self._on_session_selected)
 
@@ -859,6 +882,10 @@ class MainWindow(QMainWindow):
     @pyqtSlot(object)
     def _on_watch_hr(self, sample: HeartRateSample):
         self.live_tab.update_watch_metrics(sample)
+
+    def _on_profile_saved(self, profile: dict):
+        self.live_tab._max_hr = profile["max_hr"]
+        self.status.showMessage("Saved user profile locally")
 
     @pyqtSlot(int)
     def _on_session_selected(self, session_id: int):
