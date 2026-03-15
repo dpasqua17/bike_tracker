@@ -38,8 +38,8 @@ BIKE = {
 }
 
 WATCH = {
-    "name": "Forerunner 255",
-    "aliases": ["GARMIN", "FORERUNNER", "255"],
+    "name": None,
+    "aliases": ["MORPHEUS", "M7", "GARMIN", "FORERUNNER", "255", "HRM"],
     "auto_connect": True,
     "connect_timeout": 10.0,
 }

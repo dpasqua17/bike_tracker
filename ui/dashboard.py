@@ -17,6 +17,7 @@ import logging
 from dataclasses import dataclass
 from collections import deque
 from typing import Optional
+from math import sqrt
 
 import pyqtgraph as pg
 
@@ -29,7 +30,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal
 
 import config
 from ble.ftms_client import FTMSClient, BikeData
-from ble.hr_client import HeartRateClient
+from ble.hr_client import HeartRateClient, HeartRateSample
 from db.database import SessionDB
 from analytics.metrics import (
     estimate_power, RollingMetrics, LiveVO2Estimator,
@@ -91,6 +92,8 @@ class LiveDisplayState:
     total_kcal: Optional[float] = None
     distance_km: Optional[float] = None
     hr: Optional[int] = None
+    rr_ms: Optional[float] = None
+    hrv_rmssd_ms: Optional[float] = None
 
 
 HR_ZONES = [
@@ -109,6 +112,18 @@ def hr_zone(hr: int, max_hr: int) -> tuple[str, str]:
         if pct <= threshold:
             return label, color
     return "Z5+", "#B00000"
+
+
+def rmssd(rr_intervals_ms: list[float]) -> Optional[float]:
+    if len(rr_intervals_ms) < 2:
+        return None
+    diffs = [
+        (rr_intervals_ms[i] - rr_intervals_ms[i - 1]) ** 2
+        for i in range(1, len(rr_intervals_ms))
+    ]
+    return sqrt(sum(diffs) / len(diffs))
+
+
 class DeviceScanDialog(QDialog):
     def __init__(self, devices: list[dict], parent=None):
         super().__init__(parent)
@@ -147,6 +162,7 @@ class LiveSessionTab(QWidget):
         self._cadence_buf: deque[float] = deque([0.0] * WINDOW, maxlen=WINDOW)
         self._speed_buf:   deque[float] = deque([0.0] * WINDOW, maxlen=WINDOW)
         self._power_buf:   deque[float] = deque([0.0] * WINDOW, maxlen=WINDOW)
+        self._rr_buf:      deque[float] = deque(maxlen=120)
         self._xs = list(range(-WINDOW, 0))
         self._setup_ui()
 
@@ -195,6 +211,8 @@ class LiveSessionTab(QWidget):
         self.card_distance = MetricCard("Distance",   "km",   size="small")
         self.card_np       = MetricCard("NP",         "W",    size="small")
         self.card_tss      = MetricCard("TSS",        "",     size="small")
+        self.card_rr       = MetricCard("RR",         "ms",   size="small")
+        self.card_hrv      = MetricCard("HRV RMSSD",  "ms",   size="small")
 
         grid.addWidget(self.card_cadence,  0, 0)
         grid.addWidget(self.card_power,    0, 1)
@@ -206,6 +224,8 @@ class LiveSessionTab(QWidget):
         grid.addWidget(self.card_np,       2, 0)
         grid.addWidget(self.card_tss,      2, 1)
         grid.addWidget(self.card_distance, 2, 2)
+        grid.addWidget(self.card_rr,       3, 0)
+        grid.addWidget(self.card_hrv,      3, 1)
 
         # VO2 estimate card
         vo2_card = QWidget()
@@ -221,7 +241,7 @@ class LiveSessionTab(QWidget):
         self.vo2_class = QLabel("")
         self.vo2_class.setObjectName("vo2-class")
         vo2_layout.addWidget(self.vo2_class)
-        grid.addWidget(vo2_card, 2, 2)
+        grid.addWidget(vo2_card, 3, 2)
 
         root.addLayout(grid)
         root.addWidget(HRule())
@@ -350,8 +370,19 @@ class LiveSessionTab(QWidget):
         if power_w is not None:
             self._display.power = power_w
 
-    def update_watch_hr(self, hr: Optional[int]):
-        self._display.hr = hr
+    def update_watch_metrics(self, sample: Optional[HeartRateSample]):
+        if sample is None:
+            self._display.hr = None
+            self._display.rr_ms = None
+            self._display.hrv_rmssd_ms = None
+            self._rr_buf.clear()
+            return
+
+        self._display.hr = sample.bpm
+        if sample.rr_intervals_ms:
+            self._rr_buf.extend(sample.rr_intervals_ms)
+            self._display.rr_ms = sample.rr_intervals_ms[-1]
+            self._display.hrv_rmssd_ms = rmssd(list(self._rr_buf))
 
     @pyqtSlot()
     def _tick(self):
@@ -368,6 +399,8 @@ class LiveSessionTab(QWidget):
         self.card_resist.set_value(self._display.resistance, "{}")
         self.card_kcal.set_value(self._display.total_kcal, "{:.0f}")
         self.card_distance.set_value(self._display.distance_km, "{:.2f}")
+        self.card_rr.set_value(self._display.rr_ms, "{:.0f}")
+        self.card_hrv.set_value(self._display.hrv_rmssd_ms, "{:.0f}")
 
         if self._display.hr:
             zone, color = hr_zone(self._display.hr, self._max_hr)
@@ -421,7 +454,7 @@ class MainWindow(QMainWindow):
     _connect_result_sig = pyqtSignal(bool, str)
     _watch_connected_sig = pyqtSignal(str)
     _watch_disconnected_sig = pyqtSignal()
-    _watch_hr_sig = pyqtSignal(int)
+    _watch_hr_sig = pyqtSignal(object)
 
     def __init__(self, db):
         super().__init__()
@@ -487,7 +520,7 @@ class MainWindow(QMainWindow):
         self.disconnect_btn.setEnabled(False)
         tb_layout.addWidget(self.disconnect_btn)
 
-        self.watch_btn = QPushButton("CONNECT WATCH")
+        self.watch_btn = QPushButton("CONNECT HR SENSOR")
         self.watch_btn.clicked.connect(self._on_connect_watch)
         tb_layout.addWidget(self.watch_btn)
 
@@ -644,7 +677,12 @@ class MainWindow(QMainWindow):
 
         for bd, power_w, hr in samples:
             if hr is not None:
-                self._on_watch_hr(hr)
+                self._on_watch_hr(
+                    HeartRateSample(
+                        bpm=hr,
+                        rr_intervals_ms=[60000.0 / hr],
+                    )
+                )
             self._on_data_ready(bd, power_w)
 
         self.live_tab._tick()
@@ -659,7 +697,7 @@ class MainWindow(QMainWindow):
     def _on_connect_watch(self):
         self.watch_btn.setEnabled(False)
         self.watch_btn.setText("SEARCHING WATCH...")
-        self.status.showMessage("Searching for Garmin heart-rate broadcast...")
+        self.status.showMessage("Searching for BLE heart-rate sensor...")
         asyncio.ensure_future(self._async_connect_watch())
 
     async def _async_connect_watch(self):
@@ -679,23 +717,23 @@ class MainWindow(QMainWindow):
                 aliases=config.WATCH.get("aliases", []),
             )
             if not devices:
-                self.status.showMessage("No Garmin watch broadcast found. Enable HR broadcast on the watch and try again.")
+                self.status.showMessage("No BLE heart-rate sensor found. Wake the strap or enable HR broadcast and try again.")
                 self.watch_btn.setEnabled(True)
-                self.watch_btn.setText("CONNECT WATCH")
+                self.watch_btn.setText("CONNECT HR SENSOR")
                 return
             ok = await watch.connect(devices[0]["address"])
             if not ok:
-                self.status.showMessage("Found watch but could not connect to its heart-rate service.")
+                self.status.showMessage("Found a sensor but could not connect to its heart-rate service.")
                 self.watch_btn.setEnabled(True)
-                self.watch_btn.setText("CONNECT WATCH")
+                self.watch_btn.setText("CONNECT HR SENSOR")
                 return
             self._watch = watch
             await self._watch.start_streaming()
         except Exception:
             log.exception("Watch connect flow failed")
-            self.status.showMessage("Watch connect failed. Enable HR broadcast and try again.")
+            self.status.showMessage("HR sensor connect failed. Wake the strap or enable watch HR broadcast and try again.")
             self.watch_btn.setEnabled(True)
-            self.watch_btn.setText("CONNECT WATCH")
+            self.watch_btn.setText("CONNECT HR SENSOR")
 
     async def _async_disconnect_devices(self):
         if self._watch:
@@ -749,8 +787,8 @@ class MainWindow(QMainWindow):
 
         self._data_ready.emit(bd, power_w)
 
-    async def _async_on_watch_hr(self, hr: int):
-        self._watch_hr_sig.emit(hr)
+    async def _async_on_watch_hr(self, sample: HeartRateSample):
+        self._watch_hr_sig.emit(sample)
 
     @pyqtSlot(object, object)
     def _on_data_ready(self, bd: BikeData, power_w):
@@ -807,19 +845,20 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def _on_watch_connected(self, name: str):
-        self.status.showMessage(f"Connected to {self._ble.device_name}; watch HR active from {name}")
+        bike_name = self._ble.device_name if self._ble else "bike"
+        self.status.showMessage(f"Connected to {bike_name}; HR sensor active from {name}")
         self.watch_btn.setEnabled(True)
-        self.watch_btn.setText("WATCH CONNECTED")
+        self.watch_btn.setText("HR SENSOR CONNECTED")
 
     @pyqtSlot()
     def _on_watch_disconnected(self):
-        self.live_tab.update_watch_hr(None)
+        self.live_tab.update_watch_metrics(None)
         self.watch_btn.setEnabled(True)
-        self.watch_btn.setText("CONNECT WATCH")
+        self.watch_btn.setText("CONNECT HR SENSOR")
 
-    @pyqtSlot(int)
-    def _on_watch_hr(self, hr: int):
-        self.live_tab.update_watch_hr(hr)
+    @pyqtSlot(object)
+    def _on_watch_hr(self, sample: HeartRateSample):
+        self.live_tab.update_watch_metrics(sample)
 
     @pyqtSlot(int)
     def _on_session_selected(self, session_id: int):

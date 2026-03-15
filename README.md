@@ -63,6 +63,16 @@ Launch a screenshot-ready one-hour sample ride with seeded history:
 python -m demo.run_demo
 ```
 
+## Heart-Rate Sensors
+
+The app can connect to standard BLE Heart Rate Service (`0x180D`) devices for live BPM.
+Chest straps are usually the best fit here because they tend to expose a standard heart-rate service continuously, while watches often require a separate broadcast mode.
+
+If the sensor includes RR-interval data in the heart-rate measurement packet, the live dashboard will also show:
+
+- `RR` — latest beat-to-beat interval in milliseconds
+- `HRV RMSSD` — rolling RMSSD estimate from recent RR intervals
+
 1. Power on bike, ensure Bluetooth is active
 2. Click **SCAN DEVICES** — pick your bike from the list
 3. Click **START SESSION** when ready to ride

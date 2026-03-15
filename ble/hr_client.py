@@ -5,6 +5,7 @@ Spec: Bluetooth SIG Heart Rate Service 0x180D / Heart Rate Measurement 0x2A37
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
 from bleak import BleakClient, BleakScanner
@@ -15,21 +16,54 @@ HEART_RATE_SERVICE = "0000180d-0000-1000-8000-00805f9b34fb"
 HEART_RATE_MEASUREMENT = "00002a37-0000-1000-8000-00805f9b34fb"
 
 
-def parse_heart_rate_measurement(data: bytes) -> Optional[int]:
+@dataclass
+class HeartRateSample:
+    bpm: int
+    energy_expended: Optional[int] = None
+    rr_intervals_ms: list[float] = field(default_factory=list)
+
+
+def parse_heart_rate_measurement(data: bytes) -> Optional[HeartRateSample]:
     if len(data) < 2:
         return None
+
     flags = data[0]
+    offset = 1
+
     if flags & 0x01:
-        if len(data) < 3:
+        if len(data) < offset + 2:
             return None
-        return int.from_bytes(data[1:3], "little")
-    return data[1]
+        bpm = int.from_bytes(data[offset:offset + 2], "little")
+        offset += 2
+    else:
+        bpm = data[offset]
+        offset += 1
+
+    energy_expended = None
+    if flags & 0x08:
+        if len(data) < offset + 2:
+            return None
+        energy_expended = int.from_bytes(data[offset:offset + 2], "little")
+        offset += 2
+
+    rr_intervals_ms: list[float] = []
+    if flags & 0x10:
+        while len(data) >= offset + 2:
+            rr_raw = int.from_bytes(data[offset:offset + 2], "little")
+            rr_intervals_ms.append(rr_raw * 1000.0 / 1024.0)
+            offset += 2
+
+    return HeartRateSample(
+        bpm=bpm,
+        energy_expended=energy_expended,
+        rr_intervals_ms=rr_intervals_ms,
+    )
 
 
 class HeartRateClient:
     def __init__(
         self,
-        on_data: Callable[[int], Awaitable[None]],
+        on_data: Callable[[HeartRateSample], Awaitable[None]],
         on_connect: Optional[Callable[[str], None]] = None,
         on_disconnect: Optional[Callable[[], None]] = None,
     ):
