@@ -55,6 +55,14 @@ USER = {
 python main.py
 ```
 
+## Demo Mode
+
+Launch a screenshot-ready one-hour sample ride with seeded history:
+
+```bash
+python -m demo.run_demo
+```
+
 1. Power on bike, ensure Bluetooth is active
 2. Click **SCAN DEVICES** — pick your bike from the list
 3. Click **START SESSION** when ready to ride

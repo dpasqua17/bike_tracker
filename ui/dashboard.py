@@ -631,6 +631,25 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentIndex(0)
         self.status.showMessage("Session started — ride hard.")
 
+    def load_demo_session(self, samples: list[tuple[BikeData, Optional[float], Optional[int]]], *, bike_name: str = "Demo Bike"):
+        """Populate the live UI with deterministic sample ride data for screenshots."""
+        if not samples:
+            return
+
+        self.live_tab.set_connected(bike_name)
+        self._on_start()
+
+        elapsed_s = samples[-1][0].elapsed_time_s or len(samples)
+        self.live_tab._session_start = time.time() - elapsed_s
+
+        for bd, power_w, hr in samples:
+            if hr is not None:
+                self._on_watch_hr(hr)
+            self._on_data_ready(bd, power_w)
+
+        self.live_tab._tick()
+        self.status.showMessage("Demo mode — seeded live session for screenshots")
+
     def _on_disconnect(self):
         self.disconnect_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
